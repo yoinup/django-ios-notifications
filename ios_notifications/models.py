@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
-import socket
+
 import struct
 from binascii import hexlify, unhexlify
 import datetime
+import os
+
+import OpenSSL
+from select import select
+from gevent import ssl
+from gevent import socket
+
 
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import simplejson as json
 from django_fields.fields import EncryptedCharField
 from django.conf import settings
-
-import OpenSSL
 
 
 class NotificationPayloadSizeExceeded(Exception):
@@ -45,23 +50,18 @@ class BaseService(models.Model):
         # ssl in Python < 3.2 does not support certificates/keys as strings.
         # See http://bugs.python.org/issue3823
         # Therefore pyOpenSSL which lets us do this is a dependancy.
+        import tempfile
+        fd, path = tempfile.mkstemp()
+        os.write(fd, '%s\n%s' % (certificate, private_key))
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, certificate)
-        args = [OpenSSL.crypto.FILETYPE_PEM, private_key]
-        if passphrase is not None:
-            args.append(str(passphrase))
+        sslsock = ssl.wrap_socket(
+            sock,
+            certfile=path,
+            ssl_version=ssl.PROTOCOL_SSLv3)
         try:
-            pkey = OpenSSL.crypto.load_privatekey(*args)
-        except OpenSSL.crypto.Error:
-            raise InvalidPassPhrase
-        context = OpenSSL.SSL.Context(OpenSSL.SSL.SSLv3_METHOD)
-        context.use_certificate(cert)
-        context.use_privatekey(pkey)
-        self.connection = OpenSSL.SSL.Connection(context, sock)
-        self.connection.connect((self.hostname, self.PORT))
-        self.connection.set_connect_state()
-        try:
-            self.connection.do_handshake()
+            sslsock.connect(
+                tuple([self.hostname, self.PORT]))
+            self.connection = sslsock
             return True
         except Exception as e:
             if getattr(settings, 'DEBUG', False):
@@ -73,7 +73,7 @@ class BaseService(models.Model):
         Closes the SSL socket connection.
         """
         if self.connection is not None:
-            self.connection.shutdown()
+            self.connection.shutdown(socket.SHUT_RD)
             self.connection.close()
 
     class Meta:
@@ -128,16 +128,13 @@ class APNService(BaseService):
 
         payload = self.get_payload(notification)
 
+        # each device is notify individually
         for device in devices:
             try:
                 self.connection.send(self.pack_message(payload, device))
-            except OpenSSL.SSL.WantWriteError:
-                self.disconnect()
-                i = devices.index(device)
-                if isinstance(devices, models.query.QuerySet):
-                    devices.update(last_notified_at=datetime.datetime.now())
-                devices[:i].update(last_notified_at=datetime.datetime.now())
-                return self._write_message(notification, devices[i:]) if self.connect() else None
+            except ssl.WantWriteError:
+                select([], [self.connection], [])
+                self.connection.send(self.pack_message(payload, device))
         if isinstance(devices, models.query.QuerySet):
             devices.update(last_notified_at=datetime.datetime.now())
         else:
