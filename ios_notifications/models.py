@@ -5,7 +5,6 @@ from binascii import hexlify, unhexlify
 import datetime
 import os
 
-import OpenSSL
 from select import select
 from gevent import ssl
 from gevent import socket
@@ -90,7 +89,10 @@ class APNService(BaseService):
     """
     certificate = models.TextField()
     private_key = models.TextField()
-    passphrase = EncryptedCharField(null=True, blank=True, help_text='Passphrase for the private key')
+    passphrase = EncryptedCharField(
+        null=True,
+        blank=True,
+        help_text='(DON\'T USE Passphrase for the private key')
 
     PORT = 2195
     fmt = '!cH32sH%ds'
@@ -100,7 +102,8 @@ class APNService(BaseService):
         Establishes an encrypted SSL socket connection to the service.
         After connecting the socket can be written to or read from.
         """
-        return super(APNService, self).connect(self.certificate, self.private_key, self.passphrase)
+        return super(APNService, self).connect(
+            self.certificate, self.private_key, self.passphrase)
 
     def push_notification_to_devices(self, notification, devices=None):
         """
@@ -251,9 +254,10 @@ class Device(models.Model):
 
 class FeedbackService(BaseService):
     """
-    The service provided by Apple to inform you of devices which no longer have your app installed
-    and to which notifications have failed a number of times. Use this class to check the feedback
-    service and deactivate any devices it informs you about.
+    The service provided by Apple to inform you of devices which no longer
+    have your app installed and to which notifications have failed a number
+    of times. Use this class to check the feedback service and deactivate
+    any devices it informs you about.
 
     https://developer.apple.com/library/ios/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html#//apple_ref/doc/uid/TP40008194-CH101-SW3
     """
@@ -267,25 +271,28 @@ class FeedbackService(BaseService):
         """
         Establishes an encrypted socket connection to the feedback service.
         """
-        return super(FeedbackService, self).connect(self.apn_service.certificate, self.apn_service.private_key)
+        return super(FeedbackService, self).connect(
+            self.apn_service.certificate, self.apn_service.private_key)
 
     def call(self):
         """
-        Calls the feedback service and deactivates any devices the feedback service mentions.
+        Calls the feedback service and deactivates any devices
+        the feedback service mentions.
         """
         if self.connect():
             device_tokens = []
-            try:
-                while True:
-                    data = self.connection.recv(38)  # 38 being the length in bytes of the binary format feedback tuple.
-                    timestamp, token_length, token = struct.unpack(self.fmt, data)
-                    device_token = hexlify(token)
-                    device_tokens.append(device_token)
-            except OpenSSL.SSL.ZeroReturnError:
-                # Nothing to receive
-                pass
-            devices = Device.objects.filter(token__in=device_tokens, service=self.apn_service)
-            devices.update(is_active=False, deactivated_at=datetime.datetime.now())
+            while True:
+                data = self.connection.recv(38)
+                # 38 being the length in bytes of the binary format feedback tuple.
+                if not data:
+                    break
+                timestamp, token_length, token = struct.unpack(self.fmt, data)
+                device_token = hexlify(token)
+                device_tokens.append(device_token)
+            devices = Device.objects.filter(
+                token__in=device_tokens, service=self.apn_service)
+            devices.update(
+                is_active=False, deactivated_at=datetime.datetime.now())
             self.disconnect()
             return devices.count()
 

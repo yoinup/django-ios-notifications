@@ -25,7 +25,6 @@ setup(
     ],
     install_requires=[
         'Django>=1.3',
-        'pyOpenSSL>=0.10',
         'django-fields>=0.1.2',
 	'gevent>=0.13.8'
     ],
