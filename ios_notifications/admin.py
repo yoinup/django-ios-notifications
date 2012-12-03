@@ -1,21 +1,24 @@
 # -*- coding: utf-8 -*-
 
 from django.contrib import admin
-from ios_notifications.models import Device, Notification, APNService, FeedbackService
-from ios_notifications.forms import APNServiceForm
 from django.conf.urls.defaults import patterns, url
 from django.template.response import TemplateResponse
 from django.shortcuts import get_object_or_404
+from django.conf import settings
+
+from ios_notifications.models import (
+    Device, Notification, APNService, FeedbackService)
 
 
 class APNServiceAdmin(admin.ModelAdmin):
     list_display = ('name', 'hostname')
-    form = APNServiceForm
 
 
 class DeviceAdmin(admin.ModelAdmin):
-    fields = ('token', 'is_active', 'service')
-    list_display = ('token', 'is_active', 'service', 'last_notified_at', 'platform', 'display', 'os_version')
+    fields = ('user', 'token', 'is_active', 'service')
+    list_display = (
+        'user', 'token', 'is_active', 'service', 'last_notified_at',
+        'platform', 'display', 'os_version')
 
 
 class NotificationAdmin(admin.ModelAdmin):
@@ -33,12 +36,16 @@ class NotificationAdmin(admin.ModelAdmin):
         notification = get_object_or_404(Notification, **kwargs)
         num_devices = 0
         if request.method == 'POST':
-            service = notification.service
+            service = APNService.objects.get(pk=settings.IOS_SERVICE_ID)
+            service.push_notification_to_devices(notification)
             num_devices = service.device_set.filter(is_active=True).count()
-            notification.service.push_notification_to_devices(notification)
-        return TemplateResponse(request, 'admin/ios_notifications/notification/push_notification.html',
-                                {'notification': notification, 'num_devices': num_devices, 'sent': request.method == 'POST'},
-                                current_app='ios_notifications')
+        return TemplateResponse(
+            request,
+            'admin/ios_notifications/notification/push_notification.html',
+            {'notification': notification,
+                'num_devices': num_devices,
+                'sent': request.method == 'POST'},
+            current_app='ios_notifications')
 
 admin.site.register(Device, DeviceAdmin)
 admin.site.register(Notification, NotificationAdmin)

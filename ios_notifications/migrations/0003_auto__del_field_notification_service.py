@@ -8,96 +8,14 @@ from django.db import models
 class Migration(SchemaMigration):
 
     def forwards(self, orm):
-        # Adding model 'APNService'
-        db.create_table('ios_notifications_apnservice', (
-            ('id', self.gf('django.db.models.fields.AutoField')(primary_key=True)),
-            ('name', self.gf('django.db.models.fields.CharField')(max_length=255)),
-            ('hostname', self.gf('django.db.models.fields.CharField')(max_length=255)),
-            ('certificate', self.gf('django.db.models.fields.TextField')()),
-            ('private_key', self.gf('django.db.models.fields.TextField')()),
-            ('passphrase', self.gf('django_fields.fields.EncryptedCharField')(max_length=101, null=True, cipher='AES', blank=True)),
-        ))
-        db.send_create_signal('ios_notifications', ['APNService'])
-
-        # Adding unique constraint on 'APNService', fields ['name', 'hostname']
-        db.create_unique('ios_notifications_apnservice', ['name', 'hostname'])
-
-        # Adding model 'Notification'
-        db.create_table('ios_notifications_notification', (
-            ('id', self.gf('django.db.models.fields.AutoField')(primary_key=True)),
-            ('service', self.gf('django.db.models.fields.related.ForeignKey')(to=orm['ios_notifications.APNService'])),
-            ('message', self.gf('django.db.models.fields.CharField')(max_length=200)),
-            ('badge', self.gf('django.db.models.fields.PositiveIntegerField')(default=1, null=True)),
-            ('sound', self.gf('django.db.models.fields.CharField')(default='default', max_length=30, null=True)),
-            ('created_at', self.gf('django.db.models.fields.DateTimeField')(auto_now_add=True, blank=True)),
-            ('last_sent_at', self.gf('django.db.models.fields.DateTimeField')(null=True, blank=True)),
-        ))
-        db.send_create_signal('ios_notifications', ['Notification'])
-
-        # Adding model 'Device'
-        db.create_table('ios_notifications_device', (
-            ('id', self.gf('django.db.models.fields.AutoField')(primary_key=True)),
-            ('token', self.gf('django.db.models.fields.CharField')(max_length=64)),
-            ('is_active', self.gf('django.db.models.fields.BooleanField')(default=True)),
-            ('deactivated_at', self.gf('django.db.models.fields.DateTimeField')(null=True, blank=True)),
-            ('service', self.gf('django.db.models.fields.related.ForeignKey')(to=orm['ios_notifications.APNService'])),
-            ('added_at', self.gf('django.db.models.fields.DateTimeField')(auto_now_add=True, blank=True)),
-            ('last_notified_at', self.gf('django.db.models.fields.DateTimeField')(null=True, blank=True)),
-            ('platform', self.gf('django.db.models.fields.CharField')(max_length=30, null=True, blank=True)),
-            ('display', self.gf('django.db.models.fields.CharField')(max_length=30, null=True, blank=True)),
-            ('os_version', self.gf('django.db.models.fields.CharField')(max_length=20, null=True, blank=True)),
-        ))
-        db.send_create_signal('ios_notifications', ['Device'])
-
-        # Adding unique constraint on 'Device', fields ['token', 'service']
-        db.create_unique('ios_notifications_device', ['token', 'service_id'])
-
-        # Adding M2M table for field users on 'Device'
-        db.create_table('ios_notifications_device_users', (
-            ('id', models.AutoField(verbose_name='ID', primary_key=True, auto_created=True)),
-            ('device', models.ForeignKey(orm['ios_notifications.device'], null=False)),
-            ('user', models.ForeignKey(orm['auth.user'], null=False))
-        ))
-        db.create_unique('ios_notifications_device_users', ['device_id', 'user_id'])
-
-        # Adding model 'FeedbackService'
-        db.create_table('ios_notifications_feedbackservice', (
-            ('id', self.gf('django.db.models.fields.AutoField')(primary_key=True)),
-            ('name', self.gf('django.db.models.fields.CharField')(max_length=255)),
-            ('hostname', self.gf('django.db.models.fields.CharField')(max_length=255)),
-            ('apn_service', self.gf('django.db.models.fields.related.ForeignKey')(to=orm['ios_notifications.APNService'])),
-        ))
-        db.send_create_signal('ios_notifications', ['FeedbackService'])
-
-        # Adding unique constraint on 'FeedbackService', fields ['name', 'hostname']
-        db.create_unique('ios_notifications_feedbackservice', ['name', 'hostname'])
+        # Deleting field 'Notification.service'
+        db.delete_column('ios_notifications_notification', 'service_id')
 
 
     def backwards(self, orm):
-        # Removing unique constraint on 'FeedbackService', fields ['name', 'hostname']
-        db.delete_unique('ios_notifications_feedbackservice', ['name', 'hostname'])
 
-        # Removing unique constraint on 'Device', fields ['token', 'service']
-        db.delete_unique('ios_notifications_device', ['token', 'service_id'])
-
-        # Removing unique constraint on 'APNService', fields ['name', 'hostname']
-        db.delete_unique('ios_notifications_apnservice', ['name', 'hostname'])
-
-        # Deleting model 'APNService'
-        db.delete_table('ios_notifications_apnservice')
-
-        # Deleting model 'Notification'
-        db.delete_table('ios_notifications_notification')
-
-        # Deleting model 'Device'
-        db.delete_table('ios_notifications_device')
-
-        # Removing M2M table for field users on 'Device'
-        db.delete_table('ios_notifications_device_users')
-
-        # Deleting model 'FeedbackService'
-        db.delete_table('ios_notifications_feedbackservice')
-
+        # User chose to not deal with backwards NULL issues for 'Notification.service'
+        raise RuntimeError("Cannot reverse this migration. 'Notification.service' and its values cannot be restored.")
 
     models = {
         'auth.group': {
@@ -138,12 +56,9 @@ class Migration(SchemaMigration):
         },
         'ios_notifications.apnservice': {
             'Meta': {'unique_together': "(('name', 'hostname'),)", 'object_name': 'APNService'},
-            'certificate': ('django.db.models.fields.TextField', [], {}),
             'hostname': ('django.db.models.fields.CharField', [], {'max_length': '255'}),
             'id': ('django.db.models.fields.AutoField', [], {'primary_key': 'True'}),
-            'name': ('django.db.models.fields.CharField', [], {'max_length': '255'}),
-            'passphrase': ('django_fields.fields.EncryptedCharField', [], {'max_length': '101', 'null': 'True', 'cipher': "'AES'", 'blank': 'True'}),
-            'private_key': ('django.db.models.fields.TextField', [], {})
+            'name': ('django.db.models.fields.CharField', [], {'max_length': '255'})
         },
         'ios_notifications.device': {
             'Meta': {'unique_together': "(('token', 'service'),)", 'object_name': 'Device'},
@@ -173,7 +88,6 @@ class Migration(SchemaMigration):
             'id': ('django.db.models.fields.AutoField', [], {'primary_key': 'True'}),
             'last_sent_at': ('django.db.models.fields.DateTimeField', [], {'null': 'True', 'blank': 'True'}),
             'message': ('django.db.models.fields.CharField', [], {'max_length': '200'}),
-            'service': ('django.db.models.fields.related.ForeignKey', [], {'to': "orm['ios_notifications.APNService']"}),
             'sound': ('django.db.models.fields.CharField', [], {'default': "'default'", 'max_length': '30', 'null': 'True'})
         }
     }
