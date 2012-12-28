@@ -37,8 +37,11 @@ class NotificationAdmin(admin.ModelAdmin):
         num_devices = 0
         if request.method == 'POST':
             service = APNService.objects.get(pk=settings.IOS_SERVICE_ID)
-            service.push_notification_to_devices(notification)
-            num_devices = service.device_set.filter(is_active=True).count()
+            devices = service.device_set.filter(is_active=True)
+            service.push_notification_to_devices(
+                notification,
+                devices)
+            num_devices = len(devices)
         return TemplateResponse(
             request,
             'admin/ios_notifications/notification/push_notification.html',

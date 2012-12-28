@@ -74,14 +74,12 @@ class BaseService(models.Model):
         """
         Closes the SSL socket connection.
         """
-        if self.connection is not None:
-            try:
-                # this fails is other side has already closed
-                self.connection.shutdown(socket.SHUT_WR)
-            except:
-                pass
-            self.connection.close()
-            self.connection = None
+        if self.connection:
+            with self.connection as connection:
+                try:
+                    self.pool.free_socket(connection)
+                except:
+                    pass
 
     class Meta:
         abstract = True
@@ -95,13 +93,13 @@ class APNService(BaseService):
     PORT = 2195
     fmt = '!cH32sH%ds'
 
-    def connect(self):
+    def connect(self, certfile=settings.IOS_CERT):
         """
         Establishes an encrypted SSL socket connection to the service.
         After connecting the socket can be written to or read from.
         """
         return super(APNService, self).connect(
-            certfile=settings.IOS_CERT)
+            certfile=certfile)
 
     def push_notification_to_devices(self, notification, devices=None):
         """
@@ -144,7 +142,10 @@ class APNService(BaseService):
             notification.save()
 
     def get_payload(self, notification, **kwargs):
-        aps = {'alert': notification.message}
+        if hasattr(notification, '_message'):
+            aps = {'alert': notification._message}
+        else:
+            aps = {'alert': notification.message}
         if 'badge' in kwargs:
             aps['badge'] = kwargs['badge']
         elif notification.badge is not None:
@@ -201,13 +202,6 @@ class Notification(models.Model):
         null=True,
         blank=True)
 
-    # def push_to_all_devices(self):
-    #     """
-    #     Pushes this notification to all active devices using the
-    #     notification's related APN service.
-    #     """
-    #     self.service.push_notification_to_devices(self)
-
     def __unicode__(self):
         return u'Notification: %s' % self.message
 
@@ -232,7 +226,7 @@ class Device(models.Model):
     """
     Represents an iOS device with unique token.
     """
-    token = models.CharField(max_length=64, blank=False, null=False)
+    token = models.CharField(max_length=256)
     is_active = models.BooleanField(default=True)
     service = models.ForeignKey(APNService)
     user = models.ForeignKey(
@@ -291,11 +285,11 @@ class FeedbackService(BaseService):
     PORT = 2196
     fmt = '!lh32s'
 
-    def connect(self):
+    def connect(self, certfile=settings.IOS_CERT):
         """
         Establishes an encrypted socket connection to the feedback service.
         """
-        return super(FeedbackService, self).connect(certfile=settings.IOS_CERT)
+        return super(FeedbackService, self).connect(certfile=certfile)
 
     def call(self):
         """
@@ -303,21 +297,22 @@ class FeedbackService(BaseService):
         the feedback service mentions.
         """
         if self.connect():
-            device_tokens = []
-            while True:
-            # 38 being the length in bytes of the binary format feedback tuple.
-                data = self.connection.recv(38)
-                if not data:
-                    break
-                timestamp, token_length, token = struct.unpack(self.fmt, data)
-                device_token = hexlify(token)
-                device_tokens.append(device_token)
-            devices = Device.objects.filter(
-                token__in=device_tokens, service=self.apn_service)
-            devices.update(
-                is_active=False, deactivated_at=datetime.datetime.now())
-            self.disconnect()
-            return devices.count()
+            with self.connection as connection:
+                device_tokens = []
+                while True:
+                # 38 being the length in bytes of the binary format feedback tuple.
+                    data = connection.recv(38)
+                    if not data:
+                        break
+                    timestamp, token_length, token = struct.unpack(self.fmt, data)
+                    device_token = hexlify(token)
+                    device_tokens.append(device_token)
+                devices = Device.objects.filter(
+                    token__in=device_tokens, service=self.apn_service)
+                devices.update(
+                    is_active=False, deactivated_at=datetime.datetime.now())
+                # self.disconnect()
+                return devices.count()
 
     def __unicode__(self):
         return u'FeedbackService %s' % self.name
