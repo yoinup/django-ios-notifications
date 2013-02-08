@@ -1,7 +1,8 @@
 # coding=utf-8
 
 import contextlib
-
+import sys
+import gevent
 from gevent.queue import Queue
 from gevent import ssl, socket
 
@@ -11,7 +12,7 @@ class SocketConnectionPool(object):
             self, hostname, port,
             options={'family': socket.AF_INET, 'type': socket.SOCK_STREAM},
             ssl=False, ssl_version=ssl.PROTOCOL_SSLv3,
-            ssl_certfile=None, max=1):
+            ssl_certfile=None, max=2):
         self.max = max
         self.size = 0
         self.hostname = hostname
@@ -35,8 +36,7 @@ class SocketConnectionPool(object):
         try:
             yield _sock
         except:
-            _sock.close()
-            _sock = None
+            self._rollback(_sock)
             raise
         finally:
             if _sock is not None:
@@ -75,5 +75,17 @@ class SocketConnectionPool(object):
                 self.size += 1
                 return _sock
             except IOError:
+                self.size -= 1
                 raise IOError("Cannot create socket for %s:%s" % (
                     self.hostname, self.port))
+            except:
+                self.size -= 1
+                raise
+
+    def _rollback(self, socket):
+        try:
+            socket.rollback()
+        except:
+            gevent.get_hub().handle_error(socket, *sys.exc_info())
+            return
+        return socket

@@ -3,12 +3,12 @@
 import struct
 from binascii import hexlify, unhexlify
 import datetime
+import logging
+logger = logging.getLogger('djangoapp')
 try:
     import ujson as json
 except ImportError:
     import simplejson as json
-
-from gevent import select, ssl, socket
 
 from django.db import models
 from django.conf import settings
@@ -112,9 +112,21 @@ class APNService(BaseService):
         if self.connect():
             try:
                 self._write_message(notification, devices)
+                logger.info(
+                    '[IOS] PUSH NOTIFICATION %(n)s SENT: %(d)s',
+                    {
+                        'n': notification.pk,
+                        'd':''.join([str(i) for i in devices])
+                    })
             except Exception as e:
                 if getattr(settings, 'DEBUG', False):
-                    print e, e.__class__
+                    logger.error(
+                       '[IOS] PUSH NOTIFICATION %(n)s FAILED: %(d)s -> %(e)s',
+                       {
+                        'n': notification.pk,
+                        'd':''.join([str(i) for i in devices]),
+                        'e': e
+                        })
 
     def _write_message(self, notification, devices):
         """
