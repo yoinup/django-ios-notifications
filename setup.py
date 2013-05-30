@@ -25,9 +25,8 @@ setup(
     ],
     install_requires=[
         'Django>=1.3',
-        'django-fields>=0.1.2',
-	'pyOpenSSL>=0.10',
-	'gevent>=0.13.8'
+        'gevent>=0.13.8',
+        'python-gcm>=0.1.3'
     ],
     zip_safe=False
 )
