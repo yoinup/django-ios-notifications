@@ -1,0 +1,22 @@
+{% extends "admin/base_site.html" %}{% load i18n %}{% load url from future %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo;  <a href="{% url 'admin:index' %}ios_notifications/">{% trans 'Ios_notifications' %}</a>
+    &rsaquo; <a href="{% url 'admin:index' %}ios_notifications/notification/">{% trans 'Notifications' %}</a>
+    &rsaquo; {% trans 'Push notification' %}
+</div>
+{% endblock %}
+{% block content %}
+<div id="content-main">
+    {% if success %}
+        <h1>The notification was{% if not sent %} not{% endif %} successfully pushed</h1>
+        <div>
+            The message:
+            <pre>{{ notification.message }}</pre>
+        </div>
+    {% else %}
+        <h1>Please select a notification before submitting.</h1>
+    {% endif %}
+</div>
+{% endblock %}

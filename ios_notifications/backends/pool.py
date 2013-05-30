@@ -36,7 +36,8 @@ class SocketConnectionPool(object):
         try:
             yield _sock
         except:
-            self._rollback(_sock)
+            self.close_all()
+            _sock = None
             raise
         finally:
             if _sock is not None:
@@ -47,6 +48,17 @@ class SocketConnectionPool(object):
             put the socket back in the queue
         """
         self.pool.put(sock)
+
+    def close_all(self):
+        """
+            Connection was closed unexpectly, close all sockets
+        """
+        while not self.pool.empty():
+            _socket = self.pool.get_nowait()
+            try:
+                _socket.close()
+            except:
+                pass
 
     def _open_socket(self):
         """
@@ -81,11 +93,3 @@ class SocketConnectionPool(object):
             except:
                 self.size -= 1
                 raise
-
-    def _rollback(self, socket):
-        try:
-            socket.rollback()
-        except:
-            gevent.get_hub().handle_error(socket, *sys.exc_info())
-            return
-        return socket

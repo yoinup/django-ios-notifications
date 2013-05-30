@@ -2,9 +2,15 @@
 
 import struct
 from binascii import hexlify, unhexlify
-import datetime
 import logging
 logger = logging.getLogger('djangoapp')
+
+from gcm import GCM
+from gcm.gcm import (
+    GCMConnectionException, GCMUnavailableException,
+    GCMMissingRegistrationException)
+
+
 try:
     import ujson as json
 except ImportError:
@@ -13,8 +19,10 @@ except ImportError:
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from django.utils.translation import ugettext_lazy as _
 
 from backends.pool import SocketConnectionPool
+from utils import is_sequence
 
 
 class NotificationPayloadSizeExceeded(Exception):
@@ -48,7 +56,25 @@ class BaseService(models.Model):
     connection = None
     pool = None
 
-    def connect(self, certfile):
+    class Meta:
+        abstract = True
+
+
+class APNService(object):
+    """
+    Represents an Apple Notification Service either for live
+    or sandbox notifications.
+    """
+    hostname = settings.IOS_SERVICE_HOSTNAME
+    PORT = 2195
+    fmt = '!cH32sH%ds'
+
+    def __init__(self, *args, **kwargs):
+        self.connection = kwargs.get('connection', None)
+        self.pool = kwargs.get('pool', None)
+        self.certfile = kwargs.get('certfile', settings.IOS_CERT)
+
+    def connect(self):
         """
         Establishes an encrypted SSL socket connection to the service.
         After connecting the socket can be written to or read from.
@@ -61,13 +87,17 @@ class BaseService(models.Model):
                     hostname=self.hostname,
                     port=self.PORT,
                     ssl=True,
-                    ssl_certfile=certfile)
-            self.connection = self.pool.get_socket()
+                    ssl_certfile=self.certfile)
             return True
         except Exception as e:
             if getattr(settings, 'DEBUG', False):
-                print e, e.__class__
-            self.connection = None
+                raise
+                logger.error(
+                    "[IOS] ERROR %(c): %(e)",
+                    {
+                        'e': e,
+                        'c': e.__class__
+                    })
         return False
 
     def disconnect(self):
@@ -81,26 +111,6 @@ class BaseService(models.Model):
                 except:
                     pass
 
-    class Meta:
-        abstract = True
-
-
-class APNService(BaseService):
-    """
-    Represents an Apple Notification Service either for live
-    or sandbox notifications.
-    """
-    PORT = 2195
-    fmt = '!cH32sH%ds'
-
-    def connect(self, certfile=settings.IOS_CERT):
-        """
-        Establishes an encrypted SSL socket connection to the service.
-        After connecting the socket can be written to or read from.
-        """
-        return super(APNService, self).connect(
-            certfile=certfile)
-
     def push_notification_to_devices(self, notification, devices=None):
         """
         Sends the specific notification to devices.
@@ -108,7 +118,10 @@ class APNService(BaseService):
         list will be sent the notification.
         """
         if devices is None:
-            devices = self.device_set.filter(is_active=True)
+            devices = self.device_set.filter(
+                is_active=True).values_list('token', flat=True)
+        if not is_sequence(devices):
+            devices = [devices]
         if self.connect():
             try:
                 self._write_message(notification, devices)
@@ -116,17 +129,20 @@ class APNService(BaseService):
                     '[IOS] PUSH NOTIFICATION %(n)s SENT: %(d)s',
                     {
                         'n': notification.pk,
-                        'd':''.join([str(i) for i in devices])
+                        'd': ', '.join([str(i) for i in devices])
                     })
+                return True
             except Exception as e:
                 if getattr(settings, 'DEBUG', False):
                     logger.error(
-                       '[IOS] PUSH NOTIFICATION %(n)s FAILED: %(d)s -> %(e)s',
-                       {
-                        'n': notification.pk,
-                        'd':''.join([str(i) for i in devices]),
-                        'e': e
-                        })
+                        '[IOS] PUSH NOTIFICATION %(n)s FAILED: %(d)s -> %(e)s',
+                        {
+                            'n': notification.pk,
+                            'd': ''.join([str(i) for i in devices]),
+                            'e': e})
+                else:
+                    raise
+                return False
 
     def _write_message(self, notification, devices):
         """
@@ -136,21 +152,18 @@ class APNService(BaseService):
         if not isinstance(notification, Notification):
             raise TypeError('notification should be an instance of '
                             'ios_notifications.models.Notification')
-        with self.connection as connection:
+        with self.pool.get_socket() as connection:
             # each device is notify individually
             for device in devices:
                 kwargs = {}
-                if hasattr(device, 'badge'):
-                    kwargs['badge'] = device.badge
+                if hasattr(notification, '_badge'):
+                    kwargs['badge'] = notification._badge
                 payload = self.get_payload(notification, **kwargs)
                 connection.send(self.pack_message(payload, device))
-            if isinstance(devices, models.query.QuerySet):
-                devices.update(last_notified_at=datetime.datetime.now())
-            else:
-                for device in devices:
-                    device.last_notified_at = datetime.datetime.now()
-                    device.save()
-            notification.last_sent_at = datetime.datetime.now()
+
+            Device.objects.filter(
+                token__in=devices).update(last_notified_at=timezone.now())
+            notification.last_sent_at = timezone.now()
             notification.save()
 
     def get_payload(self, notification, **kwargs):
@@ -179,15 +192,13 @@ class APNService(BaseService):
         """
         if len(payload) > 256:
             raise NotificationPayloadSizeExceeded
-        if not isinstance(device, Device):
-            raise TypeError('device must be an instance of '
-                            'ios_notifications.models.Device')
-
+        if hasattr(device, 'token'):
+            device = device.token
         msg = struct.pack(
             self.fmt % len(payload),
             chr(0),
             32,
-            unhexlify(device.token),
+            unhexlify(device),
             len(payload),
             payload)
         return msg
@@ -197,6 +208,84 @@ class APNService(BaseService):
 
     class Meta:
         unique_together = ('name', 'hostname')
+
+
+class GCMService(object):
+    gcm = GCM(settings.GCM_API_KEY)
+
+    def push_notification_to_devices(self, notification, devices=None):
+        """
+        Sends the specific notification to devices.
+        if `devices` is not supplied, all devices in the `APNService`'s device
+        list will be sent the notification.
+        """
+        if devices is None:
+            devices = AndroidDevice.objects.filter(
+                is_active=True).values_list('token', flat=True)
+        if not is_sequence(devices):
+            devices = [devices]
+        try:
+            self._write_message(notification, devices)
+            logger.info(
+                '[GCM] PUSH NOTIFICATION %(n)s SENT: %(d)s',
+                {
+                    'n': notification.pk,
+                    'd': ''.join([str(i) for i in devices])
+                })
+            return True
+        except GCMMissingRegistrationException:
+            return True
+        except Exception as e:
+            raise
+            if getattr(settings, 'DEBUG', False):
+                logger.error(
+                    '[GCM] PUSH NOTIFICATION %(n)s FAILED: %(d)s -> %(e)s',
+                    {
+                        'n': notification.pk,
+                        'd': ''.join([str(i) for i in devices]),
+                        'e': e})
+        return False
+
+    def _write_message(self, notification, devices):
+        if not isinstance(notification, Notification):
+            raise TypeError('notification should be an instance of '
+                            'ios_notifications.models.Notification')
+        kwargs = {}
+        if hasattr(notification, '_badge'):
+            kwargs['badge'] = notification._badge
+
+        payload = self.get_payload(notification, **kwargs)
+        response = self.gcm.json_request([d for d in devices], data=payload)
+        if 'errors' in response:
+            logger.info(response['errors'])
+            # for error, reg_ids in response['errors'].items():
+            #     # Check for errors and act accordingly
+            #     if error is 'NotRegistered':
+            #     # Remove reg_ids from database
+            #         AndroidDevice.objects.filter(
+            #             token=reg_ids).update(is_active=False)
+        if 'canonical' in response:
+            logger.info(response['canonical'])
+            AndroidDevice.objects.filter(
+                token__in=response['canonical'].keys()).update(
+                    is_active=False)
+        AndroidDevice.objects.filter(token__in=devices).update(
+            last_notified_at=timezone.now())
+        notification.last_sent_at = timezone.now()
+        notification.save()
+
+    def get_payload(self, notification, **kwargs):
+        payload = {}
+        if hasattr(notification, '_message'):
+            payload['alert'] = notification._message
+        else:
+            payload['alert'] = notification.message
+        if 'badge' in kwargs:
+            payload['badge'] = kwargs['badge']
+        elif notification.badge is not None:
+            payload['badge'] = notification.badge
+
+        return payload
 
 
 class Notification(models.Model):
@@ -238,18 +327,12 @@ class Device(models.Model):
     """
     Represents an iOS device with unique token.
     """
-    token = models.CharField(max_length=256)
+    token = models.CharField(max_length=256, unique=True)
     is_active = models.BooleanField(default=True)
-    service = models.ForeignKey(APNService)
     user = models.ForeignKey(
-        'auth.User',
+        settings.AUTH_USER_MODEL,
         null=True,
         related_name='devices')
-    users = models.ManyToManyField(
-        'auth.User',
-        null=True,
-        blank=True,
-        related_name='ios_devices')
     platform = models.CharField(max_length=30, blank=True, null=True)
     display = models.CharField(max_length=30, blank=True, null=True)
     os_version = models.CharField(max_length=20, blank=True, null=True)
@@ -264,27 +347,36 @@ class Device(models.Model):
         null=True,
         blank=True)
 
-    def push_notification(self, notification):
-        """
-        Pushes a ios_notifications.models.Notification instance to
-        the device. For more details see
-        http://developer.apple.com/library/mac/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/ApplePushService/ApplePushService.html
-        """
-        if not isinstance(notification, Notification):
-            raise TypeError('notification should be an instance of'
-                            'ios_notifications.models.Notification')
-
-        notification.service.push_notification_to_devices(notification, [self])
-        self.save()
+    class Meta:
+        verbose_name = _(u'IOS device')
 
     def __unicode__(self):
-        return u'Device %s' % self.token
-
-    class Meta:
-        unique_together = ('token', 'service')
+        return u'IOS Device %s' % self.token
 
 
-class FeedbackService(BaseService):
+class AndroidDevice(models.Model):
+    token = models.CharField(max_length=256, unique=True)
+    is_active = models.BooleanField(default=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        related_name='android_devices')
+
+    deactivated_at = models.DateTimeField(
+        null=True,
+        blank=True)
+    added_at = models.DateTimeField(
+        auto_now_add=True,
+        default=timezone.now)
+    last_notified_at = models.DateTimeField(
+        null=True,
+        blank=True)
+
+    def __unicode__(self):
+        return u'Android Device %s' % self.token
+
+
+class FeedbackService(APNService):
     """
     The service provided by Apple to inform you of devices which no longer
     have your app installed and to which notifications have failed a number
@@ -293,15 +385,15 @@ class FeedbackService(BaseService):
 
     https://developer.apple.com/library/ios/#documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/CommunicatingWIthAPS/CommunicatingWIthAPS.html#//apple_ref/doc/uid/TP40008194-CH101-SW3
     """
-    apn_service = models.ForeignKey(APNService)
+
     PORT = 2196
     fmt = '!lh32s'
+    hostname = settings.IOS_FEEDBACK_HOSTNAME
 
-    def connect(self, certfile=settings.IOS_CERT):
-        """
-        Establishes an encrypted socket connection to the feedback service.
-        """
-        return super(FeedbackService, self).connect(certfile=certfile)
+    def __init__(self, *args, **kwargs):
+        self.connection = kwargs.get('connection', None)
+        self.pool = kwargs.get('pool', None)
+        self.certfile = kwargs.get('certfile', settings.IOS_CERT)
 
     def call(self):
         """
@@ -309,20 +401,21 @@ class FeedbackService(BaseService):
         the feedback service mentions.
         """
         if self.connect():
-            with self.connection as connection:
+            with self.pool.get_socket() as connection:
                 device_tokens = []
                 while True:
                 # 38 being the length in bytes of the binary format feedback tuple.
                     data = connection.recv(38)
                     if not data:
                         break
-                    timestamp, token_length, token = struct.unpack(self.fmt, data)
+                    timestamp, token_length, token = struct.unpack(
+                        self.fmt, data)
                     device_token = hexlify(token)
                     device_tokens.append(device_token)
                 devices = Device.objects.filter(
-                    token__in=device_tokens, service=self.apn_service)
+                    token__in=device_tokens)
                 devices.update(
-                    is_active=False, deactivated_at=datetime.datetime.now())
+                    is_active=False, deactivated_at=timezone.now())
                 # self.disconnect()
                 return devices.count()
 

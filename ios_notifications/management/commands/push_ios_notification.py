@@ -53,8 +53,8 @@ class Command(BaseCommand):
                 raise CommandError(
                     'The --badge option should pass an integer as its value')
         try:
-            service = APNService.objects.get(pk=service_id)
-        except APNService.DoesNotExist:
+            service = APNService()
+        except KeyError:
             raise CommandError(
                 'APNService with id %d does not exist' % service_id)
 

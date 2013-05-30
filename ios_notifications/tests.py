@@ -37,16 +37,15 @@ class APNServiceTest(TestCase):
     def setUp(self):
         time.sleep(0.5)  # Wait for test server to be started
 
-        self.service = APNService.objects.create(
-            name='test-service', hostname='127.0.0.1')
-        self.device = Device.objects.create(token=TOKEN, service=self.service)
+        self.service = APNService(
+            hostname='127.0.0.1', certfile=os.path.normpath(
+                os.path.join(os.path.dirname(__file__), 'test.pem')))
+        self.device = Device.objects.create(token=TOKEN)
         self.notification = Notification.objects.create(
             message='Test message')
 
     def test_connection_to_remote_apn_host(self):
-        self.assertTrue(self.service.connect(
-            certfile=os.path.normpath(
-                os.path.join(os.path.dirname(__file__), 'test.pem'))))
+        self.assertTrue(self.service.connect())
         #self.service.disconnect()
 
     def test_invalid_payload_size(self):
@@ -68,9 +67,10 @@ class APNServiceTest(TestCase):
         self.assertIsNone(self.notification.last_sent_at)
         self.assertIsNone(self.device.last_notified_at)
         self.service.push_notification_to_devices(
-            self.notification, [self.device])
+            self.notification, [self.device.token])
         self.assertIsNotNone(self.notification.last_sent_at)
-        self.assertIsNotNone(self.device.last_notified_at)
+        self.assertIsNotNone(
+            Device.objects.get(pk=self.device.id).last_notified_at)
 
     def tearDown(self):
         test_server_proc.stop()
@@ -81,9 +81,10 @@ class ManagementCommandPushNotificationTest(TestCase):
         self.started_at = datetime.datetime.now()
         time.sleep(0.5)  # Wait for test server to be started
 
-        self.service = APNService.objects.create(
-            name='test-service', hostname='127.0.0.1')
-        self.device = Device.objects.create(token=TOKEN, service=self.service)
+        self.service = APNService(
+            hostname='127.0.0.1', certfile=os.path.normpath(
+                os.path.join(os.path.dirname(__file__), 'test.pem')))
+        self.device = Device.objects.create(token=TOKEN)
         self.notification = Notification.objects.create(
             message='Test message')
 

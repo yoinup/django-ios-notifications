@@ -1,0 +1,30 @@
+{% extends "admin/change_form.html" %}
+{% block extrastyle %}
+    {{ block.super }}
+    <style type="text/css">
+        #send_notification {
+            float: left;
+        }
+    </style>
+{% endblock %}
+{% block content %}
+{{ block.super }}
+{% with device=adminform.form.instance %}
+{% if device and device.id %}
+<div id="send_notification">
+    <h2>Push a notification to this device</h2>
+    <p>Select a notification and push button below to push.</p>
+    <form action="{% url 'admin:admin_device_push_notification' device.id %}" method="POST" id="push_notification_form">
+        {% csrf_token %}
+        {{ notifications }}
+        <input type="submit" value="Push now!" />
+    </form>
+</div>
+<script type="text/javascript">
+    document.getElementById('push_notification_form').onsubmit = function(e) {
+        return confirm('Are you sure you want to push this notification?');
+    };
+</script>
+{% endif %}
+{% endwith %}
+{% endblock %}
