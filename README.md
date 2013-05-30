@@ -1,34 +1,29 @@
-django-ios-notifications
+django-mobile-notifications
 =================
 
-Django iOS Notifications makes it easy to send push notifications to iOS devices.
+(forked from https://github.com/stephenmuss/django-ios-notifications)
 
+* Still need more work before been usable as-is, sorry :)
+
+
+django-mobile-notifications allow to send push notifications to iOS and Android devices.
+
+This project uses [gevent](http://www.gevent.org)
 
 Installation
 -----------------
+(No package available at pypi, yet)
 
-You can install with pip: `pip install django-ios-notifications`.
-
-You then need to add `ios_notifications` to `INSTALLED_APPS` in your settings file.
+Add `ios_notifications` to `INSTALLED_APPS` in your settings file.
 
 The minimum Python version supported is Python 2.6 while the minimum Django version required is 1.3.
 There are also two other hard dependencies:
 
-* `pyOpenSSL >= 0.10`
-* `django-fields >= 0.1.2`
+* `gevent >= 0.13.8`
+* `python-gcm >= 0.1.2`
 
 
 After installation, you then need to add `ios_notifications` to `INSTALLED_APPS` in your settings file.
-
-If you want to use the API for registering devices you will also need to make the appropriate changes to your urls file:
-
-```python
-urlpatterns = patterns('',
-    ...
-    url(r'^ios-notifications/', include('ios_notifications.urls')),
-    ...
-)
-```
 
 After that you will need to run `./manage.py syncdb` to create the database tables required for django-ios-notifications.
 
@@ -36,36 +31,25 @@ After that you will need to run `./manage.py syncdb` to create the database tabl
 Setting up the APN Services
 -----------------
 
-Before you can add some devices and push notifications you'll need to set up an APN Service.
-An example of how to do this in a development environment follows.
+IOS info is handled via django settings.py:
 
-Start up your development server: `./manage.py runserver` and open up the following url in a web browser:
-
-http://127.0.0.1:8000/admin/ios_notifications/apnservice/add/.
-You'll see a form to be able to create a new APN Service.
-
-I am making the assumption that you have already created a private key and certificate.
-If not I suggest you follow one of the online guides to complete this step.
-One such example can be found [here](http://www.raywenderlich.com/3443/apple-push-notification-services-tutorial-part-12).
-
-The name of the service can be any arbitrary string.
+```
+IOS_SERVICE_HOSTNAME = 'gateway.push.apple.com'
+IOS_FEEDBACK_HOSTNAME = 'feedback.push.apple.com'
+IOS_CERT = path.join(SITE_ROOT, 'certs/production.pem')  # path to get valid certificate for Apple services.
+```
 
 The hostname will need to be a valid hostname for one of the Apple APN Service hosts.
 Currently this is `gateway.sandbox.push.apple.com` for sandbox testing and `gateway.push.apple.com` for production use.
 
-For the certificate and private key fields paste in your certificate and key including the lines with:
+Setting up the GCM Services
+-----------------
+
+Android devices using Google Cloud Messaging only need  one API key. Just add it to settings.py
 
 ```
-----BEGIN CERTIFICATE-----
------END CERTIFICATE-----
------BEGIN RSA PRIVATE KEY-----
------END RSA PRIVATE KEY-----
+GCM_API_KEY = 'asdf-asdf54-asdfqwerqwer'
 ```
-
-If your private key requires a passphrase be sure to enter it in to the `passphrase` field.
-Otherwise this field can be left blank.
-
-After this you are ready to save the APN Service.
 
 
 Registering devices
@@ -112,8 +96,7 @@ This will return an HTTP response with the device in JSON format in the response
 Updating devices
 -----------------
 
-The Django iOS Notifications REST interface also provides the means for you to be able to update
-a device via the API.
+The Django iOS Notifications REST interface also provides the means for you to be able to update a device via the API.
 
 To update a device you should call the same URL as you would above in *Getting device details*. The HTTP request method
 should be PUT. You can provide any of the following PUT parameters to update the device:
