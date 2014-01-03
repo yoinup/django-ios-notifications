@@ -9,15 +9,18 @@
 {% endblock %}
 {% block content %}
 {{ block.super }}
+{% endblock %}
+{% block after_submit_row %}
 {% with device=adminform.form.instance %}
 {% if device and device.id %}
+<fieldset class="module aligned well control-group">
 <div id="send_notification">
     <h2>Push a notification to this device</h2>
     <p>Select a notification and push button below to push.</p>
     <form action="{% url 'admin:admin_device_push_notification' device.id %}" method="POST" id="push_notification_form">
         {% csrf_token %}
         {{ notifications }}
-        <input type="submit" value="Push now!" />
+        <input type="submit" class="default btn" value="Push now!" />
     </form>
 </div>
 <script type="text/javascript">
@@ -25,6 +28,7 @@
         return confirm('Are you sure you want to push this notification?');
     };
 </script>
+</fieldset>
 {% endif %}
 {% endwith %}
 {% endblock %}

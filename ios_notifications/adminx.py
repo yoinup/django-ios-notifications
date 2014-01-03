@@ -1,27 +1,30 @@
-# -*- coding: utf-8 -*-
+# coding=utf-8
 
-from django.contrib import admin
+import xadmin
+
+from xadmin import views
+from xadmin.plugins import batch
+
 from django.conf.urls.defaults import patterns, url
 from django.template.response import TemplateResponse
 from django.shortcuts import get_object_or_404
-from django.conf import settings
 from django.http import HttpResponseBadRequest
 from django.core.urlresolvers import reverse
 
-from ios_notifications.models import (
-    Device, Notification, APNService, FeedbackService, AndroidDevice,
-    GCMService)
+from models import (
+    Device, Notification, APNService, AndroidDevice, GCMService)
 from forms import NotificationPushForm
 
 
-class DeviceAdmin(admin.ModelAdmin):
+class DeviceAdmin(object):
     fields = (
         'user', 'token', 'is_active',
         'added_at', 'deactivated_at', 'last_notified_at')
     readonly_fields = ('added_at', 'deactivated_at', 'last_notified_at')
     list_display = (
         'user', 'token', 'is_active', 'last_notified_at',)
-    change_form_template = 'admin/ios_notifications/device/change_form.html'
+    actions = [batch.BatchChangeAction, ]
+    batch_fields = ('is_active', )
 
     def get_urls(self):
         urls = super(DeviceAdmin, self).get_urls()
@@ -71,14 +74,14 @@ class DeviceAdmin(admin.ModelAdmin):
             current_app='ios_notifications')
 
 
-class AndroidDeviceAdmin(admin.ModelAdmin):
+class AndroidDeviceAdmin(object):
     fields = (
         'user', 'token', 'is_active',
         'added_at', 'deactivated_at', 'last_notified_at')
     readonly_fields = ('added_at', 'deactivated_at', 'last_notified_at')
     list_display = ('user', 'token', 'is_active')
-    change_form_template = \
-        'admin/ios_notifications/device/change_form_android.html'
+    actions = [batch.BatchChangeAction, ]
+    batch_fields = ('is_active', )
 
     def get_urls(self):
         urls = super(AndroidDeviceAdmin, self).get_urls()
@@ -127,11 +130,10 @@ class AndroidDeviceAdmin(admin.ModelAdmin):
             current_app='ios_notifications')
 
 
-class NotificationAdmin(admin.ModelAdmin):
+class NotificationAdmin(views.ModelAdminView):
     exclude = ('last_sent_at', 'square_picture_mobile', 'picture_mobile')
     list_display = ('message', 'badge', 'sound', 'created_at', 'last_sent_at')
-    change_form_template = \
-        'admin/ios_notifications/notification/change_form.html'
+    model = Notification
 
     def get_urls(self):
         urls = super(NotificationAdmin, self).get_urls()
@@ -180,6 +182,6 @@ class NotificationAdmin(admin.ModelAdmin):
             current_app='ios_notifications')
 
 
-admin.site.register(Device, DeviceAdmin)
-admin.site.register(AndroidDevice, AndroidDeviceAdmin)
-admin.site.register(Notification, NotificationAdmin)
+xadmin.site.register(Device, DeviceAdmin)
+xadmin.site.register(AndroidDevice, AndroidDeviceAdmin)
+xadmin.site.register(Notification, NotificationAdmin)

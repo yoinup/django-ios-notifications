@@ -76,28 +76,28 @@ class APNServiceTest(TestCase):
         test_server_proc.stop()
 
 
-class ManagementCommandPushNotificationTest(TestCase):
-    def setUp(self):
-        self.started_at = datetime.datetime.now()
-        time.sleep(0.5)  # Wait for test server to be started
+# class ManagementCommandPushNotificationTest(TestCase):
+#     def setUp(self):
+#         self.started_at = datetime.datetime.now()
+#         time.sleep(0.5)  # Wait for test server to be started
 
-        self.service = APNService(
-            hostname='127.0.0.1', certfile=os.path.normpath(
-                os.path.join(os.path.dirname(__file__), 'test.pem')))
-        self.device = Device.objects.create(token=TOKEN)
-        self.notification = Notification.objects.create(
-            message='Test message')
+#         self.service = APNService(
+#             hostname='127.0.0.1', certfile=os.path.normpath(
+#                 os.path.join(os.path.dirname(__file__), 'test.pem')))
+#         self.device = Device.objects.create(token=TOKEN)
+#         self.notification = Notification.objects.create(
+#             message='Test message')
 
-    def test_call_push_ios_notification_command(self):
-        msg = 'some message'
-        management.call_command(
-            'push_ios_notification',
-            **{'message': msg, 'service': self.service.id, 'verbosity': 0})
-        self.assertTrue(Notification.objects.filter(
-            message=msg).exists())
+#     def test_call_push_ios_notification_command(self):
+#         msg = 'some message'
+#         management.call_command(
+#             'push_ios_notification',
+#             **{'message': msg, 'service': self.service.id, 'verbosity': 0})
+#         self.assertTrue(Notification.objects.filter(
+#             message=msg).exists())
 
-    def tearDown(self):
-        test_server_proc.stop()
+#     def tearDown(self):
+#         test_server_proc.stop()
 
 
 # class ManagementCommandCallFeedbackService(TestCase):

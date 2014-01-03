@@ -10,7 +10,6 @@ from gcm.gcm import (
     GCMConnectionException, GCMUnavailableException,
     GCMMissingRegistrationException)
 
-
 try:
     import ujson as json
 except ImportError:
@@ -20,9 +19,13 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
+from django.contrib.contenttypes.models import ContentType
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from backends.pool import SocketConnectionPool
 from utils import is_sequence
+from yoin.utils import reduce_image
+from yoin.fields import CharNullField
 
 
 class NotificationPayloadSizeExceeded(Exception):
@@ -87,17 +90,18 @@ class APNService(object):
                     hostname=self.hostname,
                     port=self.PORT,
                     ssl=True,
-                    ssl_certfile=self.certfile)
+                    ssl_certfile=self.certfile,
+                    max=7)
             return True
         except Exception as e:
             if getattr(settings, 'DEBUG', False):
-                raise
                 logger.error(
-                    "[IOS] ERROR %(c): %(e)",
+                    "[IOS] ERROR %(c)s: %(e)s",
                     {
                         'e': e,
                         'c': e.__class__
                     })
+            raise
         return False
 
     def disconnect(self):
@@ -133,16 +137,15 @@ class APNService(object):
                     })
                 return True
             except Exception as e:
-                if getattr(settings, 'DEBUG', False):
+                if not settings.DEBUG:
                     logger.error(
                         '[IOS] PUSH NOTIFICATION %(n)s FAILED: %(d)s -> %(e)s',
                         {
                             'n': notification.pk,
                             'd': ''.join([str(i) for i in devices]),
                             'e': e})
-                else:
-                    raise
-                return False
+                raise
+            return False
 
     def _write_message(self, notification, devices):
         """
@@ -177,6 +180,10 @@ class APNService(object):
             aps['badge'] = notification.badge
         if notification.sound is not None:
             aps['sound'] = notification.sound
+        if hasattr(notification, 'pk'):
+            aps['kind'] = notification.pk
+        if hasattr(notification, '_uri'):
+            aps['notification'] = notification._uri
 
         message = {'aps': aps}
         payload = json.dumps(message)
@@ -236,7 +243,6 @@ class GCMService(object):
         except GCMMissingRegistrationException:
             return True
         except Exception as e:
-            raise
             if getattr(settings, 'DEBUG', False):
                 logger.error(
                     '[GCM] PUSH NOTIFICATION %(n)s FAILED: %(d)s -> %(e)s',
@@ -251,9 +257,6 @@ class GCMService(object):
             raise TypeError('notification should be an instance of '
                             'ios_notifications.models.Notification')
         kwargs = {}
-        if hasattr(notification, '_badge'):
-            kwargs['badge'] = notification._badge
-
         payload = self.get_payload(notification, **kwargs)
         response = self.gcm.json_request([d for d in devices], data=payload)
         if 'errors' in response:
@@ -267,8 +270,7 @@ class GCMService(object):
         if 'canonical' in response:
             logger.info(response['canonical'])
             AndroidDevice.objects.filter(
-                token__in=response['canonical'].keys()).update(
-                    is_active=False)
+                token__in=response['canonical'].keys()).delete()
         AndroidDevice.objects.filter(token__in=devices).update(
             last_notified_at=timezone.now())
         notification.last_sent_at = timezone.now()
@@ -280,10 +282,12 @@ class GCMService(object):
             payload['alert'] = notification._message
         else:
             payload['alert'] = notification.message
-        if 'badge' in kwargs:
-            payload['badge'] = kwargs['badge']
-        elif notification.badge is not None:
-            payload['badge'] = notification.badge
+        if hasattr(notification, '_badge'):
+            payload['badge'] = notification._badge
+        if hasattr(notification, '_uri'):
+            payload['notification'] = notification._uri
+        if hasattr(notification, 'pk'):
+            payload['kind'] = notification.pk
 
         return payload
 
@@ -295,6 +299,17 @@ class Notification(models.Model):
     message = models.CharField(max_length=200)
     badge = models.PositiveIntegerField(default=1, null=True)
     sound = models.CharField(max_length=30, null=True, default='default')
+    picture = models.ImageField(
+        _(u'Rectangular picture'), upload_to='notifications/pictures',
+        blank=True)
+    picture_mobile = models.ImageField(
+        _(u'Mobile picture'), upload_to='notifications/pictures/mob',
+        blank=True)
+    square_picture = models.ImageField(
+        _(u'Square picture'), upload_to='notifications/square', blank=True)
+    square_picture_mobile = models.ImageField(
+        _(u'Mobile square picture'), upload_to='notifications/square/mob',
+        blank=True)
 
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -302,6 +317,12 @@ class Notification(models.Model):
     last_sent_at = models.DateTimeField(
         null=True,
         blank=True)
+
+    class Meta:
+        verbose_name = _(u'Notification message')
+        verbose_name_plural = _(u'Notifications messages')
+        #app_label = 'notifications'
+        #db_table = 'ios_notifications_notification'
 
     def __unicode__(self):
         return u'Notification: %s' % self.message
@@ -322,17 +343,49 @@ class Notification(models.Model):
         payload = json.dumps(message)
         return len(payload) <= 256
 
+    def save(self, *args, **kwargs):
+        """
+            When images are set, they will be resized to mobile size (64x64),
+            then, resource will detect the client and returns the proper
+            picture
+        """
+        try:
+            if self.picture and not self.picture._committed:
+                file_name = self.picture.name.rpartition('/')[-1]
+                thumb_handle, thumb = reduce_image(self.picture, (320, 132))
+                # convert to simpleupladedfile class to assign to imagefield
+                suf = SimpleUploadedFile(
+                    file_name, thumb_handle.read(),
+                    content_type='image/%s' % thumb.format)
+                self.picture_mobile.save(
+                    file_name, suf, save=False)
+        except IOError:
+            pass
+        try:
+            if self.square_picture and not self.square_picture._committed:
+                file_name = self.square_picture.name.rpartition('/')[-1]
+                thumb_handle, thumb = reduce_image(
+                    self.square_picture, (64, 64))
+                # convert to simpleupladedfile class to assign to imagefield
+                suf = SimpleUploadedFile(
+                    file_name, thumb_handle.read(),
+                    content_type='image/%s' % thumb.format)
+                self.square_picture_mobile.save(
+                    file_name, suf, save=False)
+        except IOError:
+            pass
+        return super(Notification, self).save(*args, **kwargs)
+
 
 class Device(models.Model):
     """
     Represents an iOS device with unique token.
     """
-    token = models.CharField(max_length=256, unique=True)
+    token = CharNullField(
+        max_length=256, unique=True, blank=True, null=True, default=None)
     is_active = models.BooleanField(default=True)
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        related_name='devices')
+        settings.AUTH_USER_MODEL, null=True, related_name='devices')
     platform = models.CharField(max_length=30, blank=True, null=True)
     display = models.CharField(max_length=30, blank=True, null=True)
     os_version = models.CharField(max_length=20, blank=True, null=True)
@@ -349,13 +402,17 @@ class Device(models.Model):
 
     class Meta:
         verbose_name = _(u'IOS device')
+        verbose_name_plural = _(u'IOS devices')
+        app_label = 'notifications'
+        db_table = 'ios_notifications_device'
 
     def __unicode__(self):
         return u'IOS Device %s' % self.token
 
 
 class AndroidDevice(models.Model):
-    token = models.CharField(max_length=256, unique=True)
+    token = CharNullField(
+        max_length=256, unique=True, blank=True, null=True, default=None)
     is_active = models.BooleanField(default=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -371,6 +428,12 @@ class AndroidDevice(models.Model):
     last_notified_at = models.DateTimeField(
         null=True,
         blank=True)
+
+    class Meta:
+        verbose_name = _(u'Android device')
+        verbose_name_plural = _(u'Android devices')
+        app_label = 'notifications'
+        db_table = 'ios_notifications_androiddevice'
 
     def __unicode__(self):
         return u'Android Device %s' % self.token
@@ -413,11 +476,9 @@ class FeedbackService(APNService):
                     device_token = hexlify(token)
                     device_tokens.append(device_token)
                 devices = Device.objects.filter(
-                    token__in=device_tokens)
-                devices.update(
-                    is_active=False, deactivated_at=timezone.now())
+                    token__in=device_tokens).delete()
                 # self.disconnect()
-                return devices.count()
+                return devices
 
     def __unicode__(self):
         return u'FeedbackService %s' % self.name
